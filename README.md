@@ -1,66 +1,27 @@
-## Foundry
+# ZK Treasure Hunt Game Contracts
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+Smart contracts for a zero-knowledge treasure hunt game, originally developed during ETH Tokyo 2024 Hackathon (https://www.ethtokyo.com/).
 
-Foundry consists of:
+The hackathon project details can be found at https://app.akindo.io/hackathons/3dXM7ZO2WsxvlkXp
 
--   **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
--   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+## Overview
 
-## Documentation
+ZK Treasure Hunt is a blockchain-based game where players compete to find a hidden treasure location. The game intends to use zero-knowledge proofs to reveal if player is approaching the treasure while keeping the treasure location private until the game ends.
 
-https://book.getfoundry.sh/
+## Game Mechanics
 
-## Usage
+1. **Registration Phase**
+   - Players register by depositing the required registration fee
+   - Registration is open until `registrationEndTime`
 
-### Build
+2. **Active Game Phase**
+   - Registered players submit their coordinate guesses
+   - Each submission is stored
 
-```shell
-$ forge build
-```
-
-### Test
-
-```shell
-$ forge test
-```
-
-### Format
-
-```shell
-$ forge fmt
-```
-
-### Gas Snapshots
-
-```shell
-$ forge snapshot
-```
-
-### Anvil
-
-```shell
-$ anvil
-```
-
-### Deploy
-
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
-
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
+3. **Resolution Phase**
+   - Treasure location is revealed and verified
+   - Players evaluate the distance from coordinate to the treasure, updating the latest winner
+  
+4. **Completed**
+   - The closest coordinate is determined based on closest coordinate submission upon the end of resolution phase
+   - Prize pool is distributed to the winner

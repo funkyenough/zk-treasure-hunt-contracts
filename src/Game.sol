@@ -14,6 +14,7 @@ contract Game {
     string public description;
     uint256 public immutable registrationEndTime;
     uint256 public immutable gameEndTime;
+    uint256 public immutable resolutionEndTime;
     uint256 public immutable registrationFee;
 
     mapping(address => bool) public hasParticipated;
@@ -73,6 +74,7 @@ contract Game {
         string memory _description,
         uint256 _registrationEndTime,
         uint256 _gameEndTime,
+        uint256 _resolutionDuration,
         uint256 _registrationFee,
         bytes32 _treasureHash
     ) {
@@ -80,6 +82,7 @@ contract Game {
         description = _description;
         registrationEndTime = _registrationEndTime;
         gameEndTime = _gameEndTime;
+        resolutionEndTime = gameEndTime + _resolutionDuration;
         registrationFee = _registrationFee;
 
         treasure = Treasure({
@@ -114,7 +117,7 @@ contract Game {
         if (block.timestamp < registrationEndTime)
             return GamePhase.REGISTRATION;
         if (block.timestamp < gameEndTime) return GamePhase.ACTIVE;
-        if (block.timestamp < gameEndTime + 1 days) return GamePhase.RESOLUTION;
+        if (block.timestamp < resolutionEndTime) return GamePhase.RESOLUTION;
         return GamePhase.COMPLETED;
     }
 

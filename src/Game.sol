@@ -20,7 +20,6 @@ contract Game {
     mapping(address => bool) public hasParticipated;
     mapping(address => Coordinate[]) public playerCoordinates;
 
-    Treasure public treasure;
     Winner public winner;
     bytes32 public immutable treasureHash;
     Coordinate public treasureCoordinate;
@@ -28,11 +27,6 @@ contract Game {
     struct Coordinate {
         uint256 x;
         uint256 y;
-    }
-
-    struct Treasure {
-        bytes32 treasureHash;
-        Coordinate treasureCoordinate;
     }
 
     struct Winner {

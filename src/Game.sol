@@ -22,6 +22,8 @@ contract Game {
 
     Treasure public treasure;
     Winner public winner;
+    bytes32 public immutable treasureHash;
+    Coordinate public treasureCoordinate;
 
     struct Coordinate {
         uint256 x;
@@ -84,11 +86,7 @@ contract Game {
         gameEndTime = _gameEndTime;
         resolutionEndTime = gameEndTime + _resolutionDuration;
         registrationFee = _registrationFee;
-
-        treasure = Treasure({
-            treasureHash: _treasureHash,
-            treasureCoordinate: Coordinate({x: 0, y: 0}) // This is kind of not very good ...?
-        });
+        treasureHash = _treasureHash;
 
         winner = Winner({
             latestWinner: address(0),
@@ -159,8 +157,8 @@ contract Game {
         ) revert notInResolutionPhaseOrCompletion();
         if (!verifyTreasureCoordinate(_x, _y))
             revert InvalidTreasureCoordinate();
-        treasure.treasureCoordinate.x = _x;
-        treasure.treasureCoordinate.y = _y;
+        treasureCoordinate.x = _x;
+        treasureCoordinate.y = _y;
     }
 
     // Using keccak for now
@@ -169,7 +167,7 @@ contract Game {
         uint256 _y
     ) internal view returns (bool) {
         bytes32 _treasureHash = keccak256(abi.encodePacked(_x, _y));
-        return (treasure.treasureHash == _treasureHash);
+        return (treasureHash == _treasureHash);
     }
 
     // Anyone can call this function to update the winner
@@ -195,8 +193,8 @@ contract Game {
     function haversine(
         Coordinate memory _coordinate
     ) internal view returns (uint256) {
-        uint256 dx = (_coordinate.x - treasure.treasureCoordinate.x) ** 2;
-        uint256 dy = (_coordinate.y - treasure.treasureCoordinate.y) ** 2;
+        uint256 dx = (_coordinate.x - treasureCoordinate.x) ** 2;
+        uint256 dy = (_coordinate.y - treasureCoordinate.y) ** 2;
         return dx * dy;
     }
 

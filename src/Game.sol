@@ -22,9 +22,18 @@ contract Game {
     bytes32 public immutable treasureHash;
     Coordinate public treasureCoordinate;
 
+    /**
+     * @notice Represents a geographic coordinate as integers
+     * @dev Coordinates are stored as fixed-point integers with specific precision:
+     * - Format: XXX.YYYYYYYYYYY (3 digits.9 decimal places)
+     * - Example: 12.345678901 -> 12345678901
+     * - Range: Valid GPS coordinates (-90 to +90 for latitude, -180 to +180 for longitude)
+     * - Precision: 9 decimal places (~1.1mm spatial resolution at the equator)
+     * - Storage: Each coordinate uses int64 for efficient storage while maintaining precision
+     */
     struct Coordinate {
-        uint256 x;
-        uint256 y;
+        int64 x;
+        int64 y;
     }
 
     struct ClosestPlayer {
@@ -152,13 +161,13 @@ contract Game {
 
     // The difficult part is to make this function only callable by the mobile client while still remaining permissionless...
     function addPlayerCoordinate(
-        uint256 _x,
-        uint256 _y
+        int64 _x,
+        int64 _y
     ) external onlyInPhase(GamePhase.ACTIVE) onlyRegistered {
         playerCoordinates[msg.sender].push(Coordinate(_x, _y));
     }
 
-    function revealTreasureCoordinate(uint256 _x, uint256 _y) external {
+    function revealTreasureCoordinate(int64 _x, int64 _y) external {
         GamePhase gamePhase = getCurrentPhase();
         if (
             gamePhase != GamePhase.RESOLUTION ||
@@ -172,8 +181,8 @@ contract Game {
 
     // Using keccak for now
     function verifyTreasureCoordinate(
-        uint256 _x,
-        uint256 _y
+        int64 _x,
+        int64 _y
     ) internal view returns (bool) {
         bytes32 _treasureHash = keccak256(abi.encodePacked(_x, _y));
         return (treasureHash == _treasureHash);
@@ -183,7 +192,7 @@ contract Game {
     function updateWinner(address player, uint256 coordinateId) external {
         if (!hasActiveDeposit[player]) revert playerAlreadyRegistered();
         Coordinate memory coordinate = playerCoordinates[player][coordinateId];
-        uint256 distance = haversine(coordinate);
+        uint256 distance = haversine(coordinate.x, coordinate.y);
 
         if (distance >= closestPlayer.distance)
             revert playerCooridinateTooFar();
@@ -199,12 +208,11 @@ contract Game {
     }
 
     // The goal is to return haversine(_coordinate, treasure.treasureCoordinate);
-    function haversine(
-        Coordinate memory _coordinate
-    ) internal view returns (uint256) {
-        uint256 dx = (_coordinate.x - treasureCoordinate.x) ** 2;
-        uint256 dy = (_coordinate.y - treasureCoordinate.y) ** 2;
-        return dx * dy;
+    function haversine(int64 _x, int64 _y)
+     internal view returns (uint256) {
+        int256 dx = int256(_x - treasureCoordinate.x);
+        int256 dy = int256(_y - treasureCoordinate.y);
+        return uint256(dx * dx) + uint256(dy * dy);
     }
 
     function withdrawReward()

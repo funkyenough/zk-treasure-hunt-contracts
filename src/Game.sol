@@ -118,7 +118,11 @@ contract Game {
         return closestPlayer.playerAddress;
     }
 
+    // Player should be allowed to deposit again during registration phase if they choose to withdraw their deposit.
     function deposit() external payable onlyInPhase(GamePhase.REGISTRATION) {
+        GamePhase currentPhase = getCurrentPhase();
+        if (currentPhase != GamePhase.REGISTRATION)
+            revert NotInPhase(currentPhase);
         if (msg.value != registrationFee)
             revert DepositAmountIncorrect(msg.value);
         if (hasActiveDeposit[msg.sender]) revert playerAlreadyRegistered();
@@ -126,6 +130,24 @@ contract Game {
         hasActiveDeposit[msg.sender] = true;
         emit DepositReceived(msg.sender);
     }
+
+    // Player should be allowed to withdraw deposit during registration phase.
+    // Player should also be allowed to withdraw during completed phase if no closest player exists.
+    function withdrawDeposit() external {
+        if (!hasActiveDeposit[msg.sender]) revert playerHasNoActiveDeposit();
+        GamePhase currentPhase = getCurrentPhase();
+        if (
+            currentPhase != GamePhase.REGISTRATION &&
+            !(currentPhase == GamePhase.COMPLETED &&
+                closestPlayer.playerAddress == address(0))
+        ) {
+            revert NotInPhase(currentPhase);
+        }
+
+        hasActiveDeposit[msg.sender] = false;
+        (bool success, ) = msg.sender.call{value: registrationFee}("");
+        if (!success) revert DepositWithdrawFailed();
+        emit DepositWithdrawn(msg.sender);
     }
 
     // The difficult part is to make this function only callable by the mobile client while still remaining permissionless...

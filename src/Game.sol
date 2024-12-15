@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-// interface IGames {}
-// contract GameFactory {}
-
 /**
  @title A ZK Treasure Hunt Game
  @author funkyenough, kota
@@ -17,10 +14,11 @@ contract Game {
     uint256 public immutable resolutionEndTime;
     uint256 public immutable registrationFee;
 
-    mapping(address => bool) public hasParticipated;
+    mapping(address => bool) public hasActiveDeposit;
     mapping(address => Coordinate[]) public playerCoordinates;
 
-    Winner public winner;
+    ClosestPlayer public closestPlayer;
+
     bytes32 public immutable treasureHash;
     Coordinate public treasureCoordinate;
 
@@ -29,11 +27,10 @@ contract Game {
         uint256 y;
     }
 
-    struct Winner {
-        address latestWinner;
-        uint256 shortestDistance;
-        Coordinate closestCoordinate;
-        bool winnerDeclared;
+    struct ClosestPlayer {
+        address playerAddress;
+        uint256 distance;
+        Coordinate coordinate;
     }
 
     enum GamePhase {
@@ -43,20 +40,24 @@ contract Game {
         COMPLETED
     }
 
-    event playerHasDeposited(address indexed player);
-    event winnerUpdated(
+    event DepositReceived(address indexed player);
+    event DepositWithdrawn(address indexed player);
+    event RewardWithdrawn(address indexed player);
+
+    event ClosestPlayerUpdated(
         address indexed player,
         uint256 indexed distance,
         Coordinate indexed coordinate
     );
 
-    error registrationFeeIsIncorrect();
+    error DepositAmountIncorrect(uint256);
+    error DepositWithdrawFailed();
 
-    error NotInPhase();
+    error NotInPhase(GamePhase);
     error notInResolutionPhaseOrCompletion();
 
     error playerAlreadyRegistered();
-    error playerNotRegistered();
+    error playerHasNoActiveDeposit();
     error playerNotWinner();
     error playerCooridinateTooFar();
 
@@ -82,26 +83,20 @@ contract Game {
         registrationFee = _registrationFee;
         treasureHash = _treasureHash;
 
-        winner = Winner({
-            latestWinner: address(0),
-            shortestDistance: type(uint256).max,
-            closestCoordinate: Coordinate({x: 0, y: 0}), // This is also really bad.
-            winnerDeclared: false
+        closestPlayer = ClosestPlayer({
+            playerAddress: address(0),
+            distance: type(uint256).max,
+            coordinate: Coordinate({x: 0, y: 0}) // This is also really bad.
         });
     }
 
     modifier onlyInPhase(GamePhase phase) {
-        if (getCurrentPhase() != phase) revert NotInPhase();
+        if (getCurrentPhase() != phase) revert NotInPhase(phase);
         _;
     }
 
     modifier onlyRegistered() {
-        if (!hasParticipated[msg.sender]) revert playerNotRegistered();
-        _;
-    }
-
-    modifier onlywinnerDeclared() {
-        if (!winner.winnerDeclared) revert winnerNotDeclared();
+        if (!hasActiveDeposit[msg.sender]) revert playerHasNoActiveDeposit();
         _;
     }
 
@@ -113,27 +108,24 @@ contract Game {
         return GamePhase.COMPLETED;
     }
 
-    function determineWinner() public onlyInPhase(GamePhase.COMPLETED) {
-        if (winner.latestWinner == address(0)) revert noLatestWinner();
-        winner.winnerDeclared = true;
-    }
-
     function getWinner()
         public
         view
         onlyInPhase(GamePhase.COMPLETED)
         returns (address)
     {
-        if (winner.latestWinner == address(0)) revert noLatestWinner();
-        return winner.latestWinner;
+        if (closestPlayer.playerAddress == address(0)) revert noLatestWinner();
+        return closestPlayer.playerAddress;
     }
 
     function deposit() external payable onlyInPhase(GamePhase.REGISTRATION) {
-        if (msg.value != registrationFee) revert registrationFeeIsIncorrect();
-        if (hasParticipated[msg.sender]) revert playerAlreadyRegistered();
+        if (msg.value != registrationFee)
+            revert DepositAmountIncorrect(msg.value);
+        if (hasActiveDeposit[msg.sender]) revert playerAlreadyRegistered();
 
-        hasParticipated[msg.sender] = true;
-        emit playerHasDeposited(msg.sender);
+        hasActiveDeposit[msg.sender] = true;
+        emit DepositReceived(msg.sender);
+    }
     }
 
     // The difficult part is to make this function only callable by the mobile client while still remaining permissionless...
@@ -145,9 +137,10 @@ contract Game {
     }
 
     function revealTreasureCoordinate(uint256 _x, uint256 _y) external {
+        GamePhase gamePhase = getCurrentPhase();
         if (
-            getCurrentPhase() != GamePhase.RESOLUTION ||
-            getCurrentPhase() != GamePhase.COMPLETED
+            gamePhase != GamePhase.RESOLUTION ||
+            gamePhase != GamePhase.COMPLETED
         ) revert notInResolutionPhaseOrCompletion();
         if (!verifyTreasureCoordinate(_x, _y))
             revert InvalidTreasureCoordinate();
@@ -166,20 +159,20 @@ contract Game {
 
     // Anyone can call this function to update the winner
     function updateWinner(address player, uint256 coordinateId) external {
-        if (!hasParticipated[player]) revert playerAlreadyRegistered();
+        if (!hasActiveDeposit[player]) revert playerAlreadyRegistered();
         Coordinate memory coordinate = playerCoordinates[player][coordinateId];
         uint256 distance = haversine(coordinate);
 
-        if (distance >= winner.shortestDistance)
+        if (distance >= closestPlayer.distance)
             revert playerCooridinateTooFar();
-        winner.shortestDistance = distance;
-        winner.closestCoordinate = coordinate;
-        winner.latestWinner = player;
+        closestPlayer.distance = distance;
+        closestPlayer.coordinate = coordinate;
+        closestPlayer.playerAddress = player;
 
-        emit winnerUpdated(
-            winner.latestWinner,
-            winner.shortestDistance,
-            winner.closestCoordinate
+        emit ClosestPlayerUpdated(
+            closestPlayer.playerAddress,
+            closestPlayer.distance,
+            closestPlayer.coordinate
         );
     }
 
@@ -192,12 +185,16 @@ contract Game {
         return dx * dy;
     }
 
-    function withdrawReward() external payable {
-        if (!winner.winnerDeclared) revert winnerNotDeclared();
-        if (msg.sender != winner.latestWinner) revert playerNotWinner();
+    function withdrawReward()
+        external
+        payable
+        onlyInPhase(GamePhase.COMPLETED)
+    {
+        if (msg.sender != closestPlayer.playerAddress) revert playerNotWinner();
         (bool success, ) = payable(msg.sender).call{
             value: address(this).balance
         }("");
         require(success, "withdraw call has failed");
+        emit RewardWithdrawn(msg.sender);
     }
 }

@@ -1,3 +1,14 @@
+include .env
+
+t:
+	forge test -vv
+
+tt:
+	forge test -vvv
+
+ttt:
+	forge test -vvvv
+
 deploy-anvil:
 	forge script script/Deploy.s.sol:Deploy --account defaultKey
 

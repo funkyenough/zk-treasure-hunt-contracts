@@ -2,25 +2,29 @@
 pragma solidity ^0.8.26;
 
 /**
- @title A ZK Treasure Hunt Game
- @author funkyenough, kota
-
+ * @title A ZK Treasure Hunt Game
+ *  @author funkyenough, kota
  */
 contract Game {
-    string public name;
-    string public description;
-    uint256 public immutable registrationEndTime;
-    uint256 public immutable gameEndTime;
-    uint256 public immutable resolutionEndTime;
-    uint256 public immutable registrationFee;
+    event DepositReceived(address indexed player);
+    event DepositWithdrawn(address indexed player);
+    event RewardWithdrawn(address indexed player);
+    event ClosestPlayerUpdated(
+        address indexed player,
+        uint256 indexed distance,
+        Coordinate indexed coordinate
+    );
 
-    mapping(address => bool) public hasActiveDeposit;
-    mapping(address => Coordinate[]) public playerCoordinates;
-
-    ClosestPlayer public closestPlayer;
-
-    bytes32 public immutable treasureHash;
-    Coordinate public treasureCoordinate;
+    error DepositAmountIncorrect(uint256);
+    error DepositWithdrawFailed();
+    error NotInPhase(GamePhase);
+    error PlayerHasActiveDeposit();
+    error PlayerHasNoActiveDeposit();
+    error NoClosestPlayer();
+    error PlayerNotClosestPlayer();
+    error PlayerCoordinateTooFar();
+    error WinnerNotDeclared();
+    error InvalidTreasureCoordinate();
 
     /**
      * @notice Represents a geographic coordinate as integers
@@ -42,6 +46,21 @@ contract Game {
         Coordinate coordinate;
     }
 
+    string public name;
+    string public description;
+    uint256 public immutable registrationEndTime;
+    uint256 public immutable gameEndTime;
+    uint256 public immutable resolutionEndTime;
+    uint256 public immutable registrationFee;
+
+    mapping(address => bool) public hasActiveDeposit;
+    mapping(address => Coordinate[]) public playerCoordinates;
+
+    ClosestPlayer public closestPlayer;
+
+    bytes32 public immutable treasureHash;
+    Coordinate public treasureCoordinate;
+
     enum GamePhase {
         REGISTRATION,
         ACTIVE,
@@ -49,31 +68,15 @@ contract Game {
         COMPLETED
     }
 
-    event DepositReceived(address indexed player);
-    event DepositWithdrawn(address indexed player);
-    event RewardWithdrawn(address indexed player);
+    modifier onlyInPhase(GamePhase phase) {
+        if (getCurrentPhase() != phase) revert NotInPhase(phase);
+        _;
+    }
 
-    event ClosestPlayerUpdated(
-        address indexed player,
-        uint256 indexed distance,
-        Coordinate indexed coordinate
-    );
-
-    error DepositAmountIncorrect(uint256);
-    error DepositWithdrawFailed();
-
-    error NotInPhase(GamePhase);
-    error notInResolutionPhaseOrCompletion();
-
-    error playerAlreadyRegistered();
-    error playerHasNoActiveDeposit();
-    error playerNotWinner();
-    error playerCooridinateTooFar();
-
-    error noLatestWinner();
-    error winnerNotDeclared();
-
-    error InvalidTreasureCoordinate();
+    modifier onlyRegistered() {
+        if (!hasActiveDeposit[msg.sender]) revert PlayerHasNoActiveDeposit();
+        _;
+    }
 
     constructor(
         string memory _name,
@@ -99,42 +102,15 @@ contract Game {
         });
     }
 
-    modifier onlyInPhase(GamePhase phase) {
-        if (getCurrentPhase() != phase) revert NotInPhase(phase);
-        _;
-    }
-
-    modifier onlyRegistered() {
-        if (!hasActiveDeposit[msg.sender]) revert playerHasNoActiveDeposit();
-        _;
-    }
-
-    function getCurrentPhase() public view returns (GamePhase) {
-        if (block.timestamp < registrationEndTime)
-            return GamePhase.REGISTRATION;
-        if (block.timestamp < gameEndTime) return GamePhase.ACTIVE;
-        if (block.timestamp < resolutionEndTime) return GamePhase.RESOLUTION;
-        return GamePhase.COMPLETED;
-    }
-
-    function getWinner()
-        public
-        view
-        onlyInPhase(GamePhase.COMPLETED)
-        returns (address)
-    {
-        if (closestPlayer.playerAddress == address(0)) revert noLatestWinner();
-        return closestPlayer.playerAddress;
-    }
-
-    // Player should be allowed to deposit again during registration phase if they choose to withdraw their deposit.
+    // Player should be allowed to deposit again during registration phase if they choose to withdraw
+    // their deposit.
     function deposit() external payable onlyInPhase(GamePhase.REGISTRATION) {
         GamePhase currentPhase = getCurrentPhase();
         if (currentPhase != GamePhase.REGISTRATION)
             revert NotInPhase(currentPhase);
         if (msg.value != registrationFee)
             revert DepositAmountIncorrect(msg.value);
-        if (hasActiveDeposit[msg.sender]) revert playerAlreadyRegistered();
+        if (hasActiveDeposit[msg.sender]) revert PlayerHasActiveDeposit();
 
         hasActiveDeposit[msg.sender] = true;
         emit DepositReceived(msg.sender);
@@ -143,15 +119,13 @@ contract Game {
     // Player should be allowed to withdraw deposit during registration phase.
     // Player should also be allowed to withdraw during completed phase if no closest player exists.
     function withdrawDeposit() external {
-        if (!hasActiveDeposit[msg.sender]) revert playerHasNoActiveDeposit();
+        if (!hasActiveDeposit[msg.sender]) revert PlayerHasNoActiveDeposit();
         GamePhase currentPhase = getCurrentPhase();
         if (
             currentPhase != GamePhase.REGISTRATION &&
             !(currentPhase == GamePhase.COMPLETED &&
                 closestPlayer.playerAddress == address(0))
-        ) {
-            revert NotInPhase(currentPhase);
-        }
+        ) revert NotInPhase(currentPhase);
 
         hasActiveDeposit[msg.sender] = false;
         (bool success, ) = msg.sender.call{value: registrationFee}("");
@@ -159,7 +133,15 @@ contract Game {
         emit DepositWithdrawn(msg.sender);
     }
 
-    // The difficult part is to make this function only callable by the mobile client while still remaining permissionless...
+    function withdrawReward() external onlyInPhase(GamePhase.COMPLETED) {
+        if (msg.sender != closestPlayer.playerAddress) revert PlayerNotClosestPlayer();
+        (bool success, ) = msg.sender.call{value: address(this).balance}("");
+        require(success, "withdraw call has failed");
+        emit RewardWithdrawn(msg.sender);
+    }
+
+    // The difficult part is to make this function only callable by the mobile client while still
+    // remaining permissionless...
     function addPlayerCoordinate(
         int64 _x,
         int64 _y
@@ -168,34 +150,29 @@ contract Game {
     }
 
     function revealTreasureCoordinate(int64 _x, int64 _y) external {
-        GamePhase gamePhase = getCurrentPhase();
+        GamePhase currentPhase = getCurrentPhase();
         if (
-            gamePhase != GamePhase.RESOLUTION ||
-            gamePhase != GamePhase.COMPLETED
-        ) revert notInResolutionPhaseOrCompletion();
+            currentPhase != GamePhase.RESOLUTION ||
+            currentPhase != GamePhase.COMPLETED
+        ) {
+            revert NotInPhase(currentPhase);
+        }
         if (!verifyTreasureCoordinate(_x, _y))
             revert InvalidTreasureCoordinate();
         treasureCoordinate.x = _x;
         treasureCoordinate.y = _y;
     }
 
-    // Using keccak for now
-    function verifyTreasureCoordinate(
-        int64 _x,
-        int64 _y
-    ) internal view returns (bool) {
-        bytes32 _treasureHash = keccak256(abi.encodePacked(_x, _y));
-        return (treasureHash == _treasureHash);
-    }
-
-    // Anyone can call this function to update the winner
-    function updateWinner(address player, uint256 coordinateId) external {
-        if (!hasActiveDeposit[player]) revert playerAlreadyRegistered();
+    // Anyone can call this function to update the closestPlayer
+    function updateClosestPlayer(
+        address player,
+        uint256 coordinateId
+    ) external {
+        if (!hasActiveDeposit[player]) revert PlayerHasActiveDeposit();
         Coordinate memory coordinate = playerCoordinates[player][coordinateId];
         uint256 distance = haversine(coordinate.x, coordinate.y);
 
-        if (distance >= closestPlayer.distance)
-            revert playerCooridinateTooFar();
+        if (distance >= closestPlayer.distance) revert PlayerCoordinateTooFar();
         closestPlayer.distance = distance;
         closestPlayer.coordinate = coordinate;
         closestPlayer.playerAddress = player;
@@ -207,24 +184,32 @@ contract Game {
         );
     }
 
+    function getCurrentPhase() public view returns (GamePhase) {
+        if (block.timestamp < registrationEndTime)
+            return GamePhase.REGISTRATION;
+        if (block.timestamp < gameEndTime) return GamePhase.ACTIVE;
+        if (block.timestamp < resolutionEndTime) return GamePhase.RESOLUTION;
+        return GamePhase.COMPLETED;
+    }
+
+    function getClosestPlayer() public view returns (address) {
+        if (closestPlayer.playerAddress == address(0)) revert NoClosestPlayer();
+        return closestPlayer.playerAddress;
+    }
+
+    // Using keccak for now
+    function verifyTreasureCoordinate(
+        int64 _x,
+        int64 _y
+    ) internal view returns (bool) {
+        bytes32 _treasureHash = keccak256(abi.encodePacked(_x, _y));
+        return (treasureHash == _treasureHash);
+    }
+
     // The goal is to return haversine(_coordinate, treasure.treasureCoordinate);
-    function haversine(int64 _x, int64 _y)
-     internal view returns (uint256) {
+    function haversine(int64 _x, int64 _y) internal view returns (uint256) {
         int256 dx = int256(_x - treasureCoordinate.x);
         int256 dy = int256(_y - treasureCoordinate.y);
         return uint256(dx * dx) + uint256(dy * dy);
-    }
-
-    function withdrawReward()
-        external
-        payable
-        onlyInPhase(GamePhase.COMPLETED)
-    {
-        if (msg.sender != closestPlayer.playerAddress) revert playerNotWinner();
-        (bool success, ) = payable(msg.sender).call{
-            value: address(this).balance
-        }("");
-        require(success, "withdraw call has failed");
-        emit RewardWithdrawn(msg.sender);
     }
 }
